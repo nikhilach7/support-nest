@@ -153,11 +153,13 @@ class TicketViewSet(viewsets.ModelViewSet):
                 # Return fallback if validation fails
                 return Response({
                     'suggested_category': 'general',
-                    'suggested_priority': 'medium'
+                    'suggested_priority': 'medium',
+                    'classification_mode': 'heuristic'
                 })
         else:
             # Return fallback if classification fails
             return Response({
                 'suggested_category': 'general',
-                'suggested_priority': 'medium'
+                'suggested_priority': 'medium',
+                'classification_mode': 'heuristic'
             })

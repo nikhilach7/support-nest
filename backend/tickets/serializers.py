@@ -55,3 +55,7 @@ class ClassificationResponseSerializer(serializers.Serializer):
     suggested_priority = serializers.ChoiceField(
         choices=['low', 'medium', 'high', 'critical']
     )
+    classification_mode = serializers.ChoiceField(
+        choices=['gemini', 'heuristic', 'hybrid'],
+        required=False
+    )

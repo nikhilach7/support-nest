@@ -144,12 +144,12 @@ function TicketList({ refreshTrigger }) {
 
               <div className="ticket-meta">
                 <span className="category">
-                  📁 {ticket.category.charAt(0).toUpperCase() + ticket.category.slice(1)}
+                  Category: {ticket.category.charAt(0).toUpperCase() + ticket.category.slice(1)}
                 </span>
                 <span className={`status ${getStatusClass(ticket.status)}`}>
                   {ticket.status.replace('_', ' ').toUpperCase()}
                 </span>
-                <span className="date">🕒 {formatDate(ticket.created_at)}</span>
+                <span className="date">Created: {formatDate(ticket.created_at)}</span>
               </div>
 
               {/* Status Update */}

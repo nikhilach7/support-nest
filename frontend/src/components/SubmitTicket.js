@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import { ticketAPI } from '../api';
 
 const CATEGORIES = ['billing', 'technical', 'account', 'general'];
@@ -15,27 +15,48 @@ function SubmitTicket({ onTicketCreated }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
   const [success, setSuccess] = useState(false);
+  const classifyTimeoutRef = useRef(null);
+  const lastClassifyAtRef = useRef(0);
+  const lastClassifiedTextRef = useRef('');
 
-  const handleDescriptionChange = async (e) => {
+  const runClassification = async (description) => {
+    const trimmed = description.trim();
+    if (trimmed.length < 20) return;
+
+    const now = Date.now();
+    if (trimmed === lastClassifiedTextRef.current) return;
+    if (now - lastClassifyAtRef.current < 9000) return;
+
+    setIsClassifying(true);
+    try {
+      const response = await ticketAPI.classifyTicket(description);
+      setFormData((prev) => ({
+        ...prev,
+        category: response.data.suggested_category,
+        priority: response.data.suggested_priority,
+      }));
+      lastClassifiedTextRef.current = trimmed;
+      lastClassifyAtRef.current = now;
+    } catch (err) {
+      console.error('Classification failed:', err);
+    } finally {
+      setIsClassifying(false);
+    }
+  };
+
+  const handleDescriptionChange = (e) => {
     const description = e.target.value;
     setFormData({ ...formData, description });
 
+    if (classifyTimeoutRef.current) {
+      clearTimeout(classifyTimeoutRef.current);
+    }
+
     // Auto-classify when description has sufficient content
-    if (description.trim().length > 10) {
-      setIsClassifying(true);
-      try {
-        const response = await ticketAPI.classifyTicket(description);
-        setFormData((prev) => ({
-          ...prev,
-          category: response.data.suggested_category,
-          priority: response.data.suggested_priority,
-        }));
-      } catch (err) {
-        console.error('Classification failed:', err);
-        // Silently fail - user can still select manually
-      } finally {
-        setIsClassifying(false);
-      }
+    if (description.trim().length > 20) {
+      classifyTimeoutRef.current = setTimeout(() => {
+        runClassification(description);
+      }, 1800);
     }
   };
 
@@ -107,7 +128,7 @@ function SubmitTicket({ onTicketCreated }) {
             disabled={isSubmitting}
           />
           {isClassifying && (
-            <small className="classifying">🤖 AI is analyzing your description...</small>
+            <small className="classifying">AI is analyzing your description...</small>
           )}
         </div>
 
