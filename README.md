@@ -54,7 +54,7 @@ docker-compose up -d
 http://localhost:3000
 ```
 
-Done! The app is running. 🎉
+Done! The app is running. 
 
 ---
 
@@ -98,3 +98,62 @@ PATCH /api/tickets/{id}/     - Update ticket
 GET  /api/tickets/stats/     - Stats
 POST /api/tickets/classify/  - AI classify
 ```
+
+---
+
+## CI/CD
+
+Every push to `master` or `main` automatically:
+
+1. Runs Django backend tests against a real PostgreSQL service
+2. Builds the React frontend to catch compile errors
+
+Powered by GitHub Actions — see [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
+
+---
+
+## Deploying to Render (Free Tier)
+
+This repo includes a [`render.yaml`](render.yaml) for one-click infrastructure setup.
+
+### Step 1 — Push to GitHub
+
+```bash
+# First time only
+gh auth login
+gh repo create support-nest --public --source=. --remote=origin --push
+```
+
+Or if the repo already exists:
+
+```bash
+git remote add origin https://github.com/<your-username>/support-nest.git
+git push -u origin master
+```
+
+### Step 2 — Connect to Render
+
+1. Go to [render.com](https://render.com) and sign in with GitHub
+2. Click **New → Blueprint** and select your `support-nest` repository
+3. Render reads `render.yaml` and creates:
+   - PostgreSQL database (`support-nest-db`)
+   - Django backend web service (`support-nest-backend`)
+   - React frontend static site (`support-nest-frontend`)
+
+### Step 3 — Set Secret Environment Variables
+
+In the Render dashboard, set these two values that are marked `sync: false`:
+
+| Service | Key | Value |
+|---|---|---|
+| `support-nest-backend` | `GEMINI_API_KEY` | Your Gemini API key |
+| `support-nest-frontend` | `REACT_APP_API_URL` | `https://support-nest-backend.onrender.com/api` |
+| `support-nest-backend` | `CORS_ALLOWED_ORIGINS` | `https://support-nest-frontend.onrender.com` |
+
+> **Note:** The exact URLs are shown in the Render dashboard after the first deploy.
+
+### Step 4 — Deploy
+
+Click **Deploy** on both services. The backend runs migrations automatically on startup.
+
+---
