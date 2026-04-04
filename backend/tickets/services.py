@@ -1,5 +1,6 @@
 import json
 import logging
+import re
 import time
 from django.conf import settings
 import google.generativeai as genai
@@ -30,13 +31,16 @@ Ticket Description: {description}
 
 Important: If the description mentions login, password, authentication, account access, reset, or cannot access account, the category MUST be "account".
 
-Respond with ONLY a JSON object in this exact format:
-{{"category": "one_of_the_categories", "priority": "one_of_the_priorities"}}
+Respond with ONLY these two lines in plain text:
+CATEGORY: one_of_the_categories
+PRIORITY: one_of_the_priorities
 
-Do not include any explanation or additional text."""
+Do not include markdown, code blocks, JSON, or extra text."""
 
     VALID_CATEGORIES = {"billing", "technical", "account", "general"}
     VALID_PRIORITIES = {"low", "medium", "high", "critical"}
+    MAX_GEMINI_ATTEMPTS = 2
+    RETRY_BACKOFF_SECONDS = 0.2
 
     PRIORITY_KEYWORDS = {
         "critical": ["data loss", "security", "breach", "system down", "down", "outage"],
@@ -143,21 +147,24 @@ Do not include any explanation or additional text."""
         result = None
         content = ""
         last_error = None
+        logger.info(f"Starting Gemini classification for: {description[:80]}")
 
-        for attempt in range(1, 4):
+        for attempt in range(1, self.MAX_GEMINI_ATTEMPTS + 1):
             try:
+                logger.info(f"Attempt {attempt}: Calling generate_content")
                 response = self.client.generate_content(
                     prompt,
                     generation_config={
                         "temperature": 0.1,
                         "max_output_tokens": 256,
-                        "response_mime_type": "application/json",
                     },
                 )
+                logger.info(f"Attempt {attempt}: Received response, extracting text")
                 content = self._extract_response_text(response)
-                logger.info(f"Gemini response (attempt {attempt}): {content}")
+                logger.info(f"Attempt {attempt}: Extracted content (len={len(content)}): {content[:150]}")
                 result = self._parse_classification_response(content)
                 if result:
+                    logger.info(f"Successfully parsed on attempt {attempt}: {result}")
                     break
 
                 last_error = ValueError("Gemini response parsing failed")
@@ -166,11 +173,18 @@ Do not include any explanation or additional text."""
                 last_error = exc
                 logger.warning(f"Gemini request failed on attempt {attempt}: {exc}")
 
-            if attempt < 3:
-                time.sleep(1.2 * attempt)
+                # Non-retryable failures should fail fast to avoid noisy logs and wasted calls.
+                if self._is_non_retryable_error(exc):
+                    break
+
+            if attempt < self.MAX_GEMINI_ATTEMPTS:
+                time.sleep(self.RETRY_BACKOFF_SECONDS * attempt)
 
         if not result:
-            raise ValueError(str(last_error) if last_error else "Gemini response parsing failed")
+            # Gemini occasionally returns truncated JSON. Salvage useful fields if present.
+            result = self._salvage_partial_classification(content)
+            if not result:
+                raise ValueError(str(last_error) if last_error else "Gemini response parsing failed")
 
         category = (result.get("category") or "").strip().lower()
         priority = (result.get("priority") or "").strip().lower()
@@ -215,52 +229,178 @@ Do not include any explanation or additional text."""
         }
 
     def _parse_classification_response(self, content):
+        """
+        Parse JSON response from Gemini. Handles multiple formats:
+        1. Plain JSON object
+        2. JSON in markdown code blocks
+        3. JSON embedded in text
+        """
+        if not content or not isinstance(content, str):
+            logger.warning(f"Invalid content for parsing: {type(content)}")
+            return None
+        
+        content = content.strip()
+        
+        # Attempt 1: Try parsing raw content
         try:
-            return json.loads(content)
+            result = json.loads(content)
+            logger.debug(f"Parsed raw JSON successfully")
+            return result
         except json.JSONDecodeError:
-            if "```json" in content:
+            logger.debug(f"Raw JSON parse failed")
+        
+        # Attempt 2: Extract from markdown code blocks (```json ... ```)
+        if "```json" in content:
+            try:
                 json_start = content.find("```json") + 7
                 json_end = content.find("```", json_start)
-                json_str = content[json_start:json_end].strip()
-                try:
-                    return json.loads(json_str)
-                except json.JSONDecodeError:
-                    pass
-
-            if "{" in content and "}" in content:
+                if json_end > json_start:
+                    json_str = content[json_start:json_end].strip()
+                    result = json.loads(json_str)
+                    logger.debug(f"Parsed JSON from markdown block successfully")
+                    return result
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.debug(f"Markdown JSON parse failed: {e}")
+        
+        # Attempt 3: Extract from generic code blocks (``` ... ```)
+        if "```" in content:
+            try:
+                json_start = content.find("```") + 3
+                json_end = content.find("```", json_start)
+                if json_end > json_start:
+                    json_str = content[json_start:json_end].strip()
+                    result = json.loads(json_str)
+                    logger.debug(f"Parsed JSON from generic code block successfully")
+                    return result
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.debug(f"Generic code block parse failed: {e}")
+        
+        # Attempt 4: Find and extract JSON object {...}
+        if "{" in content and "}" in content:
+            try:
                 json_start = content.find("{")
                 json_end = content.rfind("}") + 1
                 json_str = content[json_start:json_end]
-                try:
-                    return json.loads(json_str)
-                except json.JSONDecodeError:
-                    pass
+                result = json.loads(json_str)
+                logger.debug(f"Parsed JSON from embedded object successfully")
+                return result
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.debug(f"Embedded JSON parse failed: {e}")
 
+        # Attempt 5: Parse plain text format:
+        # CATEGORY: account
+        # PRIORITY: high
+        category_match = re.search(r"category\s*:\s*([a-z]+)", content, flags=re.IGNORECASE)
+        priority_match = re.search(r"priority\s*:\s*([a-z]+)", content, flags=re.IGNORECASE)
+        if category_match or priority_match:
+            parsed = {
+                "category": (category_match.group(1).strip().lower() if category_match else ""),
+                "priority": (priority_match.group(1).strip().lower() if priority_match else ""),
+            }
+            logger.debug("Parsed plain text category/priority format")
+            return parsed
+        
+        # If nothing worked, log and return None
+        logger.warning(f"Could not parse any JSON from response: {content[:200]}")
+        return None
+
+    def _salvage_partial_classification(self, content):
+        if not content or not isinstance(content, str):
             return None
+
+        lowered = content.lower()
+        category = None
+        priority = None
+
+        category_match = re.search(r'"category"\s*:\s*"([a-z]+)"', lowered)
+        priority_match = re.search(r'"priority"\s*:\s*"([a-z]+)"', lowered)
+
+        if category_match:
+            found = category_match.group(1)
+            if found in self.VALID_CATEGORIES:
+                category = found
+
+        if priority_match:
+            found = priority_match.group(1)
+            if found in self.VALID_PRIORITIES:
+                priority = found
+
+        # If regex could not capture full values, infer from known labels in text.
+        if not category:
+            for candidate in self.VALID_CATEGORIES:
+                if candidate in lowered:
+                    category = candidate
+                    break
+
+        if not priority:
+            for candidate in self.VALID_PRIORITIES:
+                if candidate in lowered:
+                    priority = candidate
+                    break
+
+        if not category and not priority:
+            return None
+
+        return {"category": category or "", "priority": priority or ""}
+
+    def _is_non_retryable_error(self, exc):
+        text = str(exc).lower()
+        markers = [
+            "api_key_invalid",
+            "api key invalid",
+            "api key not found",
+            "api key expired",
+            "resource_exhausted",
+            "quota",
+            "429",
+        ]
+        return any(marker in text for marker in markers)
 
     def _extract_response_text(self, response):
         text = ""
+        
+        # Try response.text attribute first (most common for Gemini models)
         try:
-            text = (response.text or "").strip()
-        except Exception:
-            text = ""
-
-        if text and text != "```json":
-            return text
-
+            if hasattr(response, 'text') and response.text:
+                text = response.text.strip()
+                if text:
+                    logger.info(f"response.text (len={len(text)}): {text}")
+                    return text
+        except Exception as e:
+            logger.debug(f"Failed to get response.text: {e}")
+        
+        # Try candidates structure (alternative response format)
         try:
-            candidates = getattr(response, "candidates", []) or []
-            parts = []
-            for candidate in candidates:
-                content = getattr(candidate, "content", None)
-                if not content:
-                    continue
-                for part in getattr(content, "parts", []) or []:
-                    part_text = getattr(part, "text", "")
-                    if part_text:
-                        parts.append(part_text)
-
-            extracted = "".join(parts).strip()
-            return extracted or text
-        except Exception:
-            return text
+            if hasattr(response, 'candidates') and response.candidates:
+                parts = []
+                for i, candidate in enumerate(response.candidates):
+                    if hasattr(candidate, 'content') and candidate.content:
+                        for j, part in enumerate(candidate.content.parts):
+                            if hasattr(part, 'text'):
+                                part_text = part.text
+                                parts.append(part_text)
+                                logger.debug(f"Candidate {i}, Part {j}: {part_text[:100]}")
+                
+                extracted = "".join(parts).strip()
+                if extracted:
+                    logger.info(f"Extracted from candidates (len={len(extracted)}): {extracted}")
+                    return extracted
+        except Exception as e:
+            logger.debug(f"Failed to extract from candidates: {e}")
+        
+        # Try model_dump if it's a Pydantic model
+        try:
+            if hasattr(response, 'model_dump'):
+                model_data = response.model_dump()
+                logger.debug(f"Response model_dump keys: {list(model_data.keys())}")
+                if 'text' in model_data:
+                    text = model_data['text'].strip()
+                    if text:
+                        logger.info(f"Extracted from model_dump: {text[:100]}")
+                        return text
+        except Exception as e:
+            logger.debug(f"Failed to extract from model_dump: {e}")
+        
+        # Last resort: return whatever we got
+        logger.info(f"Returning fallback text (len={len(text) if text else 0})")
+        return text
