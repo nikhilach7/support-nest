@@ -22,9 +22,11 @@ function SubmitTicket({ onTicketCreated }) {
   const classifyRequestIdRef = useRef(0);
 
   useEffect(() => {
+    const timeoutRef = classifyTimeoutRef;
     return () => {
-      if (classifyTimeoutRef.current) {
-        clearTimeout(classifyTimeoutRef.current);
+      const timeoutId = timeoutRef.current;
+      if (timeoutId) {
+        clearTimeout(timeoutId);
       }
     };
   }, []);
