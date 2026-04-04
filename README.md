@@ -112,48 +112,42 @@ Powered by GitHub Actions — see [`.github/workflows/ci.yml`](.github/workflows
 
 ---
 
-## Deploying to Render (Free Tier)
+## Deploying to Vercel
 
-This repo includes a [`render.yaml`](render.yaml) for one-click infrastructure setup.
+Use Vercel for the React frontend. Your Django backend can remain on your preferred host (for example a VM, Railway, Render, Fly.io, or any Docker host).
 
 ### Step 1 — Push to GitHub
 
 ```bash
-# First time only
-gh auth login
-gh repo create support-nest --public --source=. --remote=origin --push
+git push origin main
 ```
 
-Or if the repo already exists:
+### Step 2 — Import Project in Vercel
 
-```bash
-git remote add origin https://github.com/<your-username>/support-nest.git
-git push -u origin master
-```
+1. Go to https://vercel.com and sign in with GitHub.
+2. Click **Add New Project**.
+3. Select this repository.
+4. Set **Root Directory** to `frontend`.
+5. Keep framework preset as **Create React App**.
 
-### Step 2 — Connect to Render
+### Step 3 — Configure Frontend Environment Variable
 
-1. Go to [render.com](https://render.com) and sign in with GitHub
-2. Click **New → Blueprint** and select your `support-nest` repository
-3. Render reads `render.yaml` and creates:
-   - PostgreSQL database (`support-nest-db`)
-   - Django backend web service (`support-nest-backend`)
-   - React frontend static site (`support-nest-frontend`)
+Set this in Vercel project settings:
 
-### Step 3 — Set Secret Environment Variables
+| Key | Value |
+|---|---|
+| `REACT_APP_API_URL` | `https://<your-backend-domain>/api` |
 
-In the Render dashboard, set these two values that are marked `sync: false`:
+### Step 4 — Configure Backend CORS
 
-| Service | Key | Value |
-|---|---|---|
-| `support-nest-backend` | `GEMINI_API_KEY` | Your Gemini API key |
-| `support-nest-frontend` | `REACT_APP_API_URL` | `https://support-nest-backend.onrender.com/api` |
-| `support-nest-backend` | `CORS_ALLOWED_ORIGINS` | `https://support-nest-frontend.onrender.com` |
+Add your Vercel frontend URL to backend allowed origins:
 
-> **Note:** The exact URLs are shown in the Render dashboard after the first deploy.
+| Key | Value |
+|---|---|
+| `CORS_ALLOWED_ORIGINS` | `https://<your-vercel-app>.vercel.app` |
 
-### Step 4 — Deploy
+### Step 5 — Deploy
 
-Click **Deploy** on both services. The backend runs migrations automatically on startup.
+Trigger deploy from Vercel UI (or by pushing new commits). Vercel will build and host the frontend.
 
 ---
