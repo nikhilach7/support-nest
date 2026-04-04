@@ -1,8 +1,9 @@
-import React, { useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ticketAPI } from '../api';
 
 const CATEGORIES = ['billing', 'technical', 'account', 'general'];
 const PRIORITIES = ['low', 'medium', 'high', 'critical'];
+const MIN_CLASSIFY_CHARS = 1;
 
 function SubmitTicket({ onTicketCreated }) {
   const [formData, setFormData] = useState({
@@ -18,45 +19,56 @@ function SubmitTicket({ onTicketCreated }) {
   const classifyTimeoutRef = useRef(null);
   const lastClassifyAtRef = useRef(0);
   const lastClassifiedTextRef = useRef('');
+  const classifyRequestIdRef = useRef(0);
+
+  useEffect(() => {
+    return () => {
+      if (classifyTimeoutRef.current) {
+        clearTimeout(classifyTimeoutRef.current);
+      }
+    };
+  }, []);
 
   const runClassification = async (description) => {
     const trimmed = description.trim();
-    if (trimmed.length < 20) return;
+    if (trimmed.length < MIN_CLASSIFY_CHARS) return;
 
-    const now = Date.now();
     if (trimmed === lastClassifiedTextRef.current) return;
-    if (now - lastClassifyAtRef.current < 9000) return;
+
+    const requestId = ++classifyRequestIdRef.current;
 
     setIsClassifying(true);
     try {
-      const response = await ticketAPI.classifyTicket(description);
+      const response = await ticketAPI.classifyTicket(trimmed);
+      if (requestId !== classifyRequestIdRef.current) return;
+
       setFormData((prev) => ({
         ...prev,
         category: response.data.suggested_category,
         priority: response.data.suggested_priority,
       }));
       lastClassifiedTextRef.current = trimmed;
-      lastClassifyAtRef.current = now;
+      lastClassifyAtRef.current = Date.now();
     } catch (err) {
       console.error('Classification failed:', err);
     } finally {
-      setIsClassifying(false);
+      if (requestId === classifyRequestIdRef.current) {
+        setIsClassifying(false);
+      }
     }
   };
 
   const handleDescriptionChange = (e) => {
     const description = e.target.value;
-    setFormData({ ...formData, description });
+    setFormData((prev) => ({ ...prev, description }));
 
     if (classifyTimeoutRef.current) {
       clearTimeout(classifyTimeoutRef.current);
     }
 
-    // Auto-classify when description has sufficient content
-    if (description.trim().length > 20) {
-      classifyTimeoutRef.current = setTimeout(() => {
-        runClassification(description);
-      }, 1800);
+    // Auto-classify immediately as the description changes.
+    if (description.trim().length >= MIN_CLASSIFY_CHARS) {
+      void runClassification(description);
     }
   };
 
