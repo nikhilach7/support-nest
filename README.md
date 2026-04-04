@@ -12,7 +12,7 @@ A modern, AI-powered support ticket management system built with Django, React, 
 - **Real-Time Dashboard** - Live queue status with ticket metrics
 - **Search & Filter** - Find tickets by category, priority, status, or keyword
 - **Beautiful UI** - Dark-mode-first design with responsive layout
-- **One-Click Deploy** - Start everything with a single Docker command
+- **One-Command Start** - Start everything with a single Docker command
 
 ---
 
@@ -109,45 +109,5 @@ Every push to `master` or `main` automatically:
 2. Builds the React frontend to catch compile errors
 
 Powered by GitHub Actions — see [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
-
----
-
-## Deploying to Vercel
-
-Use Vercel for the React frontend. Your Django backend can remain on your preferred host (for example a VM, Railway, Render, Fly.io, or any Docker host).
-
-### Step 1 — Push to GitHub
-
-```bash
-git push origin main
-```
-
-### Step 2 — Import Project in Vercel
-
-1. Go to https://vercel.com and sign in with GitHub.
-2. Click **Add New Project**.
-3. Select this repository.
-4. Set **Root Directory** to `frontend`.
-5. Keep framework preset as **Create React App**.
-
-### Step 3 — Configure Frontend Environment Variable
-
-Set this in Vercel project settings:
-
-| Key | Value |
-|---|---|
-| `REACT_APP_API_URL` | `https://<your-backend-domain>/api` |
-
-### Step 4 — Configure Backend CORS
-
-Add your Vercel frontend URL to backend allowed origins:
-
-| Key | Value |
-|---|---|
-| `CORS_ALLOWED_ORIGINS` | `https://<your-vercel-app>.vercel.app` |
-
-### Step 5 — Deploy
-
-Trigger deploy from Vercel UI (or by pushing new commits). Vercel will build and host the frontend.
 
 ---
